@@ -157,15 +157,15 @@ class GRFootballEnv(BaseEnv):
         # #   Variables for V-GEPOR
         # # ============================
 
-        # self.drawer = RealTimeDrawer()
-        # self.recorder = ray.get_actor("Recorder")
+        self.drawer = RealTimeDrawer()
+        self.recorder = ray.get_actor("Recorder")
 
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
 
-        # self.video_buffer = AnyBuffer(30)
+        self.video_buffer = AnyBuffer(30)
 
-        # self.rollout_manger = ray.get_actor("RolloutManager")
+        self.rollout_manger = ray.get_actor("RolloutManager")
 
         # # ==========================================
         # #   Variables for Vanilla Potential Reward
@@ -272,6 +272,34 @@ class GRFootballEnv(BaseEnv):
         #     xT_pb_reward = self.gamma * xt[idx] - self.last_xt_reward[idx]
         #     self.last_xt_reward[idx] = xT_pb_reward
         #     rewards[idx] += xT_pb_reward * 0.02
+
+        # save frames before vLLM guiding
+        # ===============================
+        #    V-GEPF trigger replay image saving for vLLM
+        # =================================
+        print(f'>> Rollout epoch: {ray.get(self.rollout_manger.get_rollout_epoch.remote())}')
+        if ((ray.get(self.rollout_manger.get_rollout_epoch.remote()) + 1) % 20 == 0
+                and ray.get(self.rollout_manger.get_rollout_epoch.remote()) != 0
+                and not ray.get(self.recorder.get.remote('images'))
+                and self.step_ctr % 3 == 0):
+            print(f'>> Recording video...')
+            if not done and not self.video_buffer.is_full():
+                img = self.drawer.draw_from_obs(observations[0], simple=True)
+                self.video_buffer.add(img)
+                print(f'>> Video buffer length {len(self.video_buffer.data)}')
+            else:
+                ray.get(self.recorder.add.remote({'images': self.video_buffer.data}, 1))
+
+                # # note: test
+                # with imageio.get_writer(f'/home/trl/football/videos/{time.time()}.mp4', fps=25) as writer:
+                #     for image in self.video_buffer.data:
+                #         # Convert PIL Image to NumPy array
+                #         frame = imageio.core.util.Array(np.array(image))
+                #         # Append the frame to the video
+                #         writer.append_data(frame)
+
+                print(f">> Video saved!")
+                self.video_buffer.clear()
 
         # official rewards should be shared
         for agent_id in self.agent_ids:
